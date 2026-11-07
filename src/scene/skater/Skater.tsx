@@ -243,6 +243,7 @@ export function Skater() {
         model = ch.model;
         animatorRef.current = new SkaterAnimator(ch, rig);
         st.serial = -1; // force a clean state on the next frame
+        useGame.getState().setCharacterReady(true);
       })
       .catch((err) => {
         // The game stays playable (board only) if the character asset cannot be loaded.
@@ -251,6 +252,7 @@ export function Skater() {
       });
     return () => {
       alive = false;
+      useGame.getState().setCharacterReady(false);
       animatorRef.current?.dispose();
       animatorRef.current = null;
       model?.removeFromParent();

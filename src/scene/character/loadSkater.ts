@@ -1,20 +1,69 @@
 import { AnimationClip, Group, Mesh, MeshStandardMaterial, Object3D, Quaternion, SkinnedMesh, Vector3 } from 'three';
 import { GLTF, GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { useGame } from '../../game/store';
 import { Humanoid } from './humanoid';
 import { authorSkateClips, FootRest, SkateClips, StanceFrame } from './skatePoses';
 
-/** URL of the rigged skater built by `npm run build:skater`. */
+/** URL of the rigged skater built by `npm run build:skater` (also preloaded by index.html). */
 export const SKATER_URL = `${import.meta.env.BASE_URL}models/skater.glb`;
 
 let gltfPromise: Promise<GLTF> | null = null;
 
-/** Loads (once) and prepares the shared skater asset. */
+/**
+ * Downloads a GLB, reporting progress (0..1) from the total length in its own header, which
+ * stays correct when the server compresses the response and Content-Length is unusable.
+ */
+async function fetchGlb(url: string, onProgress: (fraction: number) => void): Promise<ArrayBuffer> {
+  const res = await fetch(url); // same mode/credentials as the <link rel="preload"> so it is reused
+  if (!res.ok) throw new Error(`HTTP ${res.status} loading ${url}`);
+  if (!res.body) return res.arrayBuffer();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let loaded = 0;
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.byteLength;
+    if (total === 0 && loaded >= 12) {
+      const head = new Uint8Array(12);
+      let o = 0;
+      for (const c of chunks) {
+        head.set(c.subarray(0, 12 - o), o);
+        o += Math.min(c.byteLength, 12 - o);
+        if (o === 12) break;
+      }
+      const view = new DataView(head.buffer);
+      total = view.getUint32(0, true) === 0x46546c67 ? view.getUint32(8, true) : -1; // 'glTF' magic
+    }
+    if (total > 0) onProgress(Math.min(loaded / total, 1));
+  }
+  const out = new Uint8Array(loaded);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.byteLength;
+  }
+  return out.buffer;
+}
+
+/** Reports download progress to the menu, in whole percent steps. */
+function reportProgress(fraction: number) {
+  const st = useGame.getState();
+  const rounded = Math.floor(fraction * 100) / 100;
+  if (rounded !== st.characterProgress) st.setCharacterProgress(rounded);
+}
+
+/** Loads (once) and prepares the shared skater asset. Called at startup so the download starts early. */
 export function loadSkaterAsset(): Promise<GLTF> {
   if (!gltfPromise) {
-    gltfPromise = new GLTFLoader()
-      .loadAsync(SKATER_URL)
+    reportProgress(0);
+    gltfPromise = fetchGlb(SKATER_URL, reportProgress)
+      .then((data) => new GLTFLoader().parseAsync(data, SKATER_URL.slice(0, SKATER_URL.lastIndexOf('/') + 1)))
       .then((gltf) => {
+        reportProgress(1);
         gltf.scene.traverse((o) => {
           const m = o as Mesh;
           if (!m.isMesh) return;

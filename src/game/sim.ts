@@ -38,7 +38,7 @@ import { boostFactor, POWERUP_INFO } from './powerups';
 import { Coin, makePlayer, Obstacle, runtime, TrickKind } from './runtime';
 import { Spawner } from './spawner';
 import { saveNumber } from './storage';
-import { PowerState, useGame } from './store';
+import { isRiderPending, PowerState, useGame } from './store';
 import { makeFrame } from './track';
 
 export const spawner = new Spawner();
@@ -604,6 +604,8 @@ const blurActive = () => {
 };
 
 export function startGame() {
+  // never start a run before the rider is in the scene (slow connections take a while)
+  if (isRiderPending(useGame.getState())) return;
   audio.init();
   audio.click();
   blurActive();

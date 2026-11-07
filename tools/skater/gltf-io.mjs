@@ -88,9 +88,18 @@ export class GlbBuilder {
     return n;
   }
 
-  bufferView(bytes, target) {
+  /** Marks a glTF extension as used (and required, since the loader must understand it). */
+  requireExtension(name) {
+    for (const k of ['extensionsUsed', 'extensionsRequired']) {
+      this.json[k] ??= [];
+      if (!this.json[k].includes(name)) this.json[k].push(name);
+    }
+  }
+
+  bufferView(bytes, target, byteStride) {
     this._align();
     const view = { buffer: 0, byteOffset: this.byteLength, byteLength: bytes.byteLength };
+    if (byteStride) view.byteStride = byteStride;
     if (target) view.target = target;
     this.chunks.push(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
     this.byteLength += bytes.byteLength;
@@ -98,34 +107,41 @@ export class GlbBuilder {
     return this.json.bufferViews.length - 1;
   }
 
-  /** typed: Float32Array | Uint16Array | Uint32Array | Uint8Array */
-  accessor(typed, type, { target, normalized = false, minmax = false } = {}) {
-    const componentType =
-      typed instanceof Float32Array
-        ? 5126
-        : typed instanceof Uint32Array
-          ? 5125
-          : typed instanceof Uint16Array
-            ? 5123
-            : typed instanceof Uint8Array
-              ? 5121
-              : null;
-    if (componentType === null) throw new Error('unsupported array');
+  /**
+   * typed: Float32Array | Uint32Array | Uint16Array | Int16Array | Uint8Array | Int8Array.
+   * `slots` (>= the type's component count) stores each element padded to that many components,
+   * so e.g. a byte VEC3 keeps the 4-byte vertex alignment glTF requires.
+   */
+  accessor(typed, type, { target, normalized = false, minmax = false, slots } = {}) {
+    const componentType = [
+      [Float32Array, 5126],
+      [Uint32Array, 5125],
+      [Uint16Array, 5123],
+      [Int16Array, 5122],
+      [Uint8Array, 5121],
+      [Int8Array, 5120],
+    ].find(([Ctor]) => typed instanceof Ctor)?.[1];
+    if (componentType === undefined) throw new Error('unsupported array');
     const n = COMPONENTS[type];
+    const step = slots ?? n;
+    const stride = step === n ? undefined : step * typed.BYTES_PER_ELEMENT;
+    if (stride !== undefined && stride % 4 !== 0) throw new Error(`vertex stride ${stride} is not 4-byte aligned`);
     const acc = {
-      bufferView: this.bufferView(typed, target),
+      bufferView: this.bufferView(typed, target, stride),
       componentType,
-      count: typed.length / n,
+      count: typed.length / step,
       type,
     };
     if (normalized) acc.normalized = true;
     if (minmax) {
       const min = new Array(n).fill(Infinity);
       const max = new Array(n).fill(-Infinity);
-      for (let i = 0; i < typed.length; i++) {
-        const c = i % n;
-        if (typed[i] < min[c]) min[c] = typed[i];
-        if (typed[i] > max[c]) max[c] = typed[i];
+      for (let i = 0; i < acc.count; i++) {
+        for (let c = 0; c < n; c++) {
+          const v = typed[i * step + c];
+          if (v < min[c]) min[c] = v;
+          if (v > max[c]) max[c] = v;
+        }
       }
       acc.min = min;
       acc.max = max;

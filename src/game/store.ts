@@ -26,6 +26,9 @@ function detectQuality(): Quality {
   return coarse || cores <= 4 ? 'low' : 'high';
 }
 
+/** True while the rider is still loading (a failed load does not block play: board-only fallback). */
+export const isRiderPending = (s: { characterReady: boolean; characterError: boolean }) => !s.characterReady && !s.characterError;
+
 export const isTouchDevice = () =>
   typeof window !== 'undefined' &&
   (('ontouchstart' in window && navigator.maxTouchPoints > 0) ||
@@ -45,8 +48,14 @@ interface GameStore {
   lastRun: RunSummary | null;
   runId: number;
   characterError: boolean;
+  /** The rider model is in the scene; a run only starts once it is (or it failed to load). */
+  characterReady: boolean;
+  /** Rider model download progress, 0..1. */
+  characterProgress: number;
   setPhase: (p: Phase) => void;
   setCharacterError: (v: boolean) => void;
+  setCharacterReady: (v: boolean) => void;
+  setCharacterProgress: (v: number) => void;
   setHud: (score: number, coins: number) => void;
   setPower: (v: PowerState) => void;
   setBest: (best: number) => void;
@@ -81,8 +90,12 @@ export const useGame = create<GameStore>()((set) => ({
   lastRun: null,
   runId: 0,
   characterError: false,
+  characterReady: false,
+  characterProgress: 0,
   setPhase: (phase) => set({ phase }),
   setCharacterError: (characterError) => set({ characterError }),
+  setCharacterReady: (characterReady) => set({ characterReady }),
+  setCharacterProgress: (characterProgress) => set({ characterProgress }),
   setHud: (score, coins) => set({ score, coins }),
   setPower: (power) => set({ power }),
   setBest: (best) => set({ best }),

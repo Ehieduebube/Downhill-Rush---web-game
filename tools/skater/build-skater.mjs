@@ -90,27 +90,77 @@ const glb = new GlbBuilder();
 const J_ARRAY = 34962;
 const J_INDEX = 34963;
 
-/** Compact a primitive to the referenced vertices and write it. */
+// Vertex data is quantized (KHR_mesh_quantization, decoded natively by three's GLTFLoader) to keep
+// the download small: the float layout was ~2.2 MB, which took over a minute on a slow connection.
+// Positions stay float so the skin's inverse bind matrices (used by the pose authoring) stay exact.
+glb.requireExtension('KHR_mesh_quantization');
+
+/** Compact a primitive to the referenced vertices and write it (quantized). */
 function writeSkinned({ position, normal, uv, color, joints, weights, index }) {
   const used = new Int32Array(position.length / 3).fill(-1);
   const order = [];
   for (const i of index) if (used[i] < 0) used[i] = order.push(i) - 1;
-  const pick = (src, n, Ctor) => {
-    const out = new Ctor(order.length * n);
+  const count = order.length;
+  /** Copies `n` components per referenced vertex into `slots`-wide elements, mapped by `enc`. */
+  const pick = (src, n, Ctor, slots = n, enc = (v) => v) => {
+    const out = new Ctor(count * slots);
     order.forEach((o, k) => {
-      for (let c = 0; c < n; c++) out[k * n + c] = src[o * n + c];
+      for (let c = 0; c < n; c++) out[k * slots + c] = enc(src[o * n + c], c, o);
     });
     return out;
   };
+  const unorm = (bits) => (v) => Math.round(Math.min(Math.max(v, 0), 1) * bits);
+
+  // normals: unit length, signed bytes (padded to 4 bytes per vertex)
+  const nrm = pick(normal, 3, Float32Array);
+  const nrmQ = new Int8Array(count * 4);
+  for (let k = 0; k < count; k++) {
+    const x = nrm[k * 3];
+    const y = nrm[k * 3 + 1];
+    const z = nrm[k * 3 + 2];
+    const len = Math.hypot(x, y, z) || 1;
+    nrmQ[k * 4] = Math.round((x / len) * 127);
+    nrmQ[k * 4 + 1] = Math.round((y / len) * 127);
+    nrmQ[k * 4 + 2] = Math.round((z / len) * 127);
+  }
+
+  // skin: joint indices as bytes, weights as normalized bytes that still sum to exactly 1
+  const jointsQ = pick(joints, 4, Uint8Array, 4, (v) => {
+    if (v > 255) throw new Error(`joint index ${v} does not fit byte JOINTS_0`);
+    return v;
+  });
+  const wts = pick(weights, 4, Float32Array);
+  const wtsQ = new Uint8Array(count * 4);
+  for (let k = 0; k < count; k++) {
+    const w = wts.subarray(k * 4, k * 4 + 4);
+    const sum = w[0] + w[1] + w[2] + w[3] || 1;
+    let total = 0;
+    let big = 0;
+    for (let c = 0; c < 4; c++) {
+      wtsQ[k * 4 + c] = Math.round((w[c] / sum) * 255);
+      total += wtsQ[k * 4 + c];
+      if (w[c] > w[big]) big = c;
+    }
+    wtsQ[k * 4 + big] += 255 - total;
+  }
+
   const attributes = {
     POSITION: glb.accessor(pick(position, 3, Float32Array), 'VEC3', { target: J_ARRAY, minmax: true }),
-    NORMAL: glb.accessor(pick(normal, 3, Float32Array), 'VEC3', { target: J_ARRAY }),
-    JOINTS_0: glb.accessor(pick(joints, 4, Uint16Array), 'VEC4', { target: J_ARRAY }),
-    WEIGHTS_0: glb.accessor(pick(weights, 4, Float32Array), 'VEC4', { target: J_ARRAY }),
+    NORMAL: glb.accessor(nrmQ, 'VEC3', { target: J_ARRAY, normalized: true, slots: 4 }),
+    JOINTS_0: glb.accessor(jointsQ, 'VEC4', { target: J_ARRAY }),
+    WEIGHTS_0: glb.accessor(wtsQ, 'VEC4', { target: J_ARRAY, normalized: true }),
   };
-  if (uv) attributes.TEXCOORD_0 = glb.accessor(pick(uv, 2, Float32Array), 'VEC2', { target: J_ARRAY });
-  if (color) attributes.COLOR_0 = glb.accessor(pick(color, 3, Float32Array), 'VEC3', { target: J_ARRAY });
-  const idx = new Uint32Array(index.length);
+  if (uv) {
+    // 16-bit UVs when they fit in [0, 1]; the eyes' UVs run past 1 and stay float
+    const fits = order.every((o) => uv[o * 2] >= 0 && uv[o * 2] <= 1 && uv[o * 2 + 1] >= 0 && uv[o * 2 + 1] <= 1);
+    attributes.TEXCOORD_0 = fits
+      ? glb.accessor(pick(uv, 2, Uint16Array, 2, unorm(65535)), 'VEC2', { target: J_ARRAY, normalized: true })
+      : glb.accessor(pick(uv, 2, Float32Array), 'VEC2', { target: J_ARRAY });
+  }
+  // linear vertex colours are dark on the trousers, so 16 bits (8 would band the baked shading)
+  if (color) attributes.COLOR_0 = glb.accessor(pick(color, 3, Uint16Array, 4, unorm(65535)), 'VEC3', { target: J_ARRAY, normalized: true, slots: 4 });
+  // glTF reserves the type's maximum (65535) as an index value
+  const idx = count < 65535 ? new Uint16Array(index.length) : new Uint32Array(index.length);
   for (let i = 0; i < index.length; i++) idx[i] = used[index[i]];
   return { attributes, indices: glb.accessor(idx, 'SCALAR', { target: J_INDEX }) };
 }

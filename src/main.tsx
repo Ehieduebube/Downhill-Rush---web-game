@@ -5,7 +5,13 @@ import '@fontsource/poppins/latin-700.css';
 import '@fontsource/poppins/latin-800.css';
 import '@fontsource/poppins/latin-900-italic.css';
 import App from './App';
+import { loadSkaterAsset } from './scene/character/loadSkater';
 import './styles.css';
+
+// Start downloading the rider right away (continuing index.html's preload) instead of waiting for
+// the 3D scene to mount; on a slow connection it is the largest download. Failures are retried
+// and reported by the Skater component.
+void loadSkaterAsset().catch(() => undefined);
 
 if (import.meta.env.DEV) {
   // Dev-only debug handle for automated testing; not included in production builds.

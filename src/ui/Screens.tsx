@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { goToMenu, restartGame, resumeGame, startGame, toggleMute } from '../game/sim';
-import { isTouchDevice, useGame } from '../game/store';
+import { isRiderPending, isTouchDevice, useGame } from '../game/store';
 import { audio } from '../game/audio';
 import { CoinIcon, SoundIcon } from './icons';
 
@@ -42,6 +42,8 @@ export function StartScreen() {
   const best = useGame((s) => s.best);
   const bank = useGame((s) => s.bank);
   const characterError = useGame((s) => s.characterError);
+  const loading = useGame(isRiderPending);
+  const progress = useGame((s) => Math.round(s.characterProgress * 100));
   const touch = useMemo(() => isTouchDevice(), []);
   if (phase !== 'menu') return null;
   return (
@@ -56,8 +58,14 @@ export function StartScreen() {
         {characterError && <p className="hint notice">The skater model could not be loaded - reload the page to try again.</p>}
       </div>
       <div className="start-center">
-        <button className="btn btn-play" onClick={() => startGame()}>
-          PLAY
+        <button
+          className={loading ? 'btn btn-play is-loading' : 'btn btn-play'}
+          onClick={() => startGame()}
+          disabled={loading}
+          aria-busy={loading}
+          aria-label={loading ? `Loading the skater, ${progress}%` : 'Play'}
+        >
+          {loading ? `LOADING ${progress}%` : 'PLAY'}
         </button>
         <div className="stat-row">
           <div className="panel stat-chip">

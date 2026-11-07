@@ -588,6 +588,16 @@ button:focus-visible {
   animation: pulse 1.6s ease-in-out infinite;
 }
 
+/* waiting for the rider model: same button, calmer and smaller text so "LOADING 100%" fits */
+.btn-play.is-loading {
+  cursor: progress;
+  animation: none;
+  font-size: clamp(18px, calc(var(--u) * 2.5), 30px);
+  font-variant-numeric: tabular-nums;
+  filter: saturate(0.55) brightness(0.92);
+  transform: none;
+}
+
 .btn-gold {
   color: var(--gold-dark);
   background: linear-gradient(180deg, #fff2a8 0%, #ffd23f 35%, #ffa21f 100%);
